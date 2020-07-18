@@ -5,15 +5,16 @@ use num::{Bounded, One, Zero};
 use rand::distributions::{Distribution, Standard};
 use rand::Rng;
 
-use alga::general::ClosedDiv;
 use crate::base::allocator::Allocator;
 use crate::base::dimension::{DimName, DimNameAdd, DimNameSum, U1, U2, U3, U4, U5, U6};
 use crate::base::{DefaultAllocator, Scalar, VectorN};
+use simba::scalar::ClosedDiv;
 
 use crate::geometry::Point;
 
 impl<N: Scalar, D: DimName> Point<N, D>
-where DefaultAllocator: Allocator<N, D>
+where
+    DefaultAllocator: Allocator<N, D>,
 {
     /// Creates a new point with uninitialized coordinates.
     #[inline]
@@ -38,7 +39,9 @@ where DefaultAllocator: Allocator<N, D>
     /// ```
     #[inline]
     pub fn origin() -> Self
-    where N: Zero {
+    where
+        N: Zero,
+    {
         Self::from(VectorN::from_element(N::zero()))
     }
 
@@ -99,7 +102,7 @@ where DefaultAllocator: Allocator<N, D>
         DefaultAllocator: Allocator<N, DimNameSum<D, U1>>,
     {
         if !v[D::dim()].is_zero() {
-            let coords = v.fixed_slice::<D, U1>(0, 0) / v[D::dim()];
+            let coords = v.fixed_slice::<D, U1>(0, 0) / v[D::dim()].inlined_clone();
             Some(Self::from(coords))
         } else {
             None
@@ -113,7 +116,8 @@ where DefaultAllocator: Allocator<N, D>
  *
  */
 impl<N: Scalar + Bounded, D: DimName> Bounded for Point<N, D>
-where DefaultAllocator: Allocator<N, D>
+where
+    DefaultAllocator: Allocator<N, D>,
 {
     #[inline]
     fn max_value() -> Self {

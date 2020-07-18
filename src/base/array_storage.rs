@@ -44,9 +44,24 @@ where
     data: GenericArray<N, Prod<R::Value, C::Value>>,
 }
 
-#[deprecated(note="renamed to `ArrayStorage`")]
+#[deprecated(note = "renamed to `ArrayStorage`")]
 /// Renamed to [ArrayStorage].
 pub type MatrixArray<N, R, C> = ArrayStorage<N, R, C>;
+
+impl<N, R, C> Default for ArrayStorage<N, R, C>
+where
+    R: DimName,
+    C: DimName,
+    R::Value: Mul<C::Value>,
+    Prod<R::Value, C::Value>: ArrayLength<N>,
+    N: Default,
+{
+    fn default() -> Self {
+        ArrayStorage {
+            data: Default::default(),
+        }
+    }
+}
 
 impl<N, R, C> Hash for ArrayStorage<N, R, C>
 where
@@ -111,7 +126,8 @@ where
     R::Value: Mul<C::Value>,
     Prod<R::Value, C::Value>: ArrayLength<N>,
     GenericArray<N, Prod<R::Value, C::Value>>: Copy,
-{}
+{
+}
 
 impl<N, R, C> Clone for ArrayStorage<N, R, C>
 where
@@ -136,7 +152,8 @@ where
     C: DimName,
     R::Value: Mul<C::Value>,
     Prod<R::Value, C::Value>: ArrayLength<N>,
-{}
+{
+}
 
 impl<N, R, C> PartialEq for ArrayStorage<N, R, C>
 where
@@ -186,13 +203,17 @@ where
 
     #[inline]
     fn into_owned(self) -> Owned<N, R, C>
-    where DefaultAllocator: Allocator<N, R, C> {
+    where
+        DefaultAllocator: Allocator<N, R, C>,
+    {
         self
     }
 
     #[inline]
     fn clone_owned(&self) -> Owned<N, R, C>
-    where DefaultAllocator: Allocator<N, R, C> {
+    where
+        DefaultAllocator: Allocator<N, R, C>,
+    {
         let it = self.iter().cloned();
 
         DefaultAllocator::allocate_from_iterator(self.shape().0, self.shape().1, it)
@@ -232,7 +253,8 @@ where
     R::Value: Mul<C::Value>,
     Prod<R::Value, C::Value>: ArrayLength<N>,
     DefaultAllocator: Allocator<N, R, C, Buffer = Self>,
-{}
+{
+}
 
 unsafe impl<N, R, C> ContiguousStorageMut<N, R, C> for ArrayStorage<N, R, C>
 where
@@ -242,7 +264,8 @@ where
     R::Value: Mul<C::Value>,
     Prod<R::Value, C::Value>: ArrayLength<N>,
     DefaultAllocator: Allocator<N, R, C, Buffer = Self>,
-{}
+{
+}
 
 /*
  *
@@ -260,7 +283,9 @@ where
     Prod<R::Value, C::Value>: ArrayLength<N>,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    where
+        S: Serializer,
+    {
         let mut serializer = serializer.serialize_seq(Some(R::dim() * C::dim()))?;
 
         for e in self.iter() {
@@ -281,7 +306,9 @@ where
     Prod<R::Value, C::Value>: ArrayLength<N>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'a> {
+    where
+        D: Deserializer<'a>,
+    {
         deserializer.deserialize_seq(ArrayStorageVisitor::new())
     }
 }
@@ -326,12 +353,15 @@ where
 
     #[inline]
     fn visit_seq<V>(self, mut visitor: V) -> Result<ArrayStorage<N, R, C>, V::Error>
-    where V: SeqAccess<'a> {
+    where
+        V: SeqAccess<'a>,
+    {
         let mut out: Self::Value = unsafe { mem::uninitialized() };
         let mut curr = 0;
 
         while let Some(value) = visitor.next_element()? {
-            *out.get_mut(curr).ok_or_else(|| V::Error::invalid_length(curr, &self))? = value;
+            *out.get_mut(curr)
+                .ok_or_else(|| V::Error::invalid_length(curr, &self))? = value;
             curr += 1;
         }
 

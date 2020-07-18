@@ -1,11 +1,11 @@
 use num::Zero;
 use num_complex::Complex;
 
+use crate::ComplexHelper;
 use na::allocator::Allocator;
 use na::dimension::{DimDiff, DimSub, U1};
 use na::storage::Storage;
 use na::{DefaultAllocator, Matrix, MatrixN, Scalar, VectorN};
-use crate::ComplexHelper;
 
 use lapack;
 
@@ -13,39 +13,38 @@ use lapack;
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(
-        serialize = "DefaultAllocator: Allocator<N, D, D> +
+    serde(bound(serialize = "DefaultAllocator: Allocator<N, D, D> +
                            Allocator<N, DimDiff<D, U1>>,
          MatrixN<N, D>: Serialize,
-         VectorN<N, DimDiff<D, U1>>: Serialize"
-    ))
+         VectorN<N, DimDiff<D, U1>>: Serialize"))
 )]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(
-        deserialize = "DefaultAllocator: Allocator<N, D, D> +
+    serde(bound(deserialize = "DefaultAllocator: Allocator<N, D, D> +
                            Allocator<N, DimDiff<D, U1>>,
          MatrixN<N, D>: Deserialize<'de>,
-         VectorN<N, DimDiff<D, U1>>: Deserialize<'de>"
-    ))
+         VectorN<N, DimDiff<D, U1>>: Deserialize<'de>"))
 )]
 #[derive(Clone, Debug)]
 pub struct Hessenberg<N: Scalar, D: DimSub<U1>>
-where DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>
+where
+    DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>,
 {
     h: MatrixN<N, D>,
     tau: VectorN<N, DimDiff<D, U1>>,
 }
 
-impl<N: Scalar, D: DimSub<U1>> Copy for Hessenberg<N, D>
+impl<N: Scalar + Copy, D: DimSub<U1>> Copy for Hessenberg<N, D>
 where
     DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>,
     MatrixN<N, D>: Copy,
     VectorN<N, DimDiff<D, U1>>: Copy,
-{}
+{
+}
 
 impl<N: HessenbergScalar + Zero, D: DimSub<U1>> Hessenberg<N, D>
-where DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>
+where
+    DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>,
 {
     /// Computes the hessenberg decomposition of the matrix `m`.
     pub fn new(mut m: MatrixN<N, D>) -> Self {
@@ -97,7 +96,8 @@ where DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>
 }
 
 impl<N: HessenbergReal + Zero, D: DimSub<U1>> Hessenberg<N, D>
-where DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>
+where
+    DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>,
 {
     /// Computes the matrices `(Q, H)` of this decomposition.
     #[inline]
@@ -137,7 +137,7 @@ where DefaultAllocator: Allocator<N, D, D> + Allocator<N, DimDiff<D, U1>>
  * Lapack functions dispatch.
  *
  */
-pub trait HessenbergScalar: Scalar {
+pub trait HessenbergScalar: Scalar + Copy {
     fn xgehrd(
         n: i32,
         ilo: i32,

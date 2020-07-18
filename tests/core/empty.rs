@@ -57,4 +57,8 @@ fn empty_matrix_gemm_tr() {
     let m2 = DMatrix::<f32>::zeros(0, 4);
     res.gemm_tr(1.0, &m1, &m2, 0.5);
     assert_eq!(res, DMatrix::repeat(3, 4, 0.5));
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> upstream/dev

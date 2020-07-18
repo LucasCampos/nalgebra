@@ -1,11 +1,11 @@
-use num::{One, Signed, Zero};
-use std::cmp::{PartialOrd, Ordering};
+use num::{One, Zero};
 use std::iter;
 use std::ops::{
     Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign,
 };
 
-use alga::general::{ComplexField, ClosedAdd, ClosedDiv, ClosedMul, ClosedNeg, ClosedSub};
+use simba::scalar::{ClosedAdd, ClosedDiv, ClosedMul, ClosedNeg, ClosedSub};
+use simba::simd::{SimdPartialOrd, SimdSigned};
 
 use crate::base::allocator::{Allocator, SameShapeAllocator, SameShapeC, SameShapeR};
 use crate::base::constraint::{
@@ -14,6 +14,7 @@ use crate::base::constraint::{
 use crate::base::dimension::{Dim, DimMul, DimName, DimProd, Dynamic};
 use crate::base::storage::{ContiguousStorageMut, Storage, StorageMut};
 use crate::base::{DefaultAllocator, Matrix, MatrixMN, MatrixN, MatrixSum, Scalar, VectorSliceN};
+use crate::SimdComplexField;
 
 /*
  *
@@ -119,7 +120,7 @@ where
     #[inline]
     pub fn neg_mut(&mut self) {
         for e in self.iter_mut() {
-            *e = -*e
+            *e = -e.inlined_clone()
         }
     }
 }
@@ -153,8 +154,8 @@ macro_rules! componentwise_binop_impl(
                                                                      out: &mut Matrix<N, R3, C3, SC>)
                 where SB: Storage<N, R2, C2>,
                       SC: StorageMut<N, R3, C3> {
-                assert!(self.shape() == rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
-                assert!(self.shape() == out.shape(), "Matrix addition/subtraction output dimensions mismatch.");
+                assert_eq!(self.shape(), rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
+                assert_eq!(self.shape(), out.shape(), "Matrix addition/subtraction output dimensions mismatch.");
 
                 // This is the most common case and should be deduced at compile-time.
                 // FIXME: use specialization instead?
@@ -164,7 +165,7 @@ macro_rules! componentwise_binop_impl(
                     let out  = out.data.as_mut_slice();
                     for i in 0 .. arr1.len() {
                         unsafe {
-                            *out.get_unchecked_mut(i) = arr1.get_unchecked(i).$method(*arr2.get_unchecked(i));
+                            *out.get_unchecked_mut(i) = arr1.get_unchecked(i).inlined_clone().$method(arr2.get_unchecked(i).inlined_clone());
                         }
                     }
                 }
@@ -172,7 +173,7 @@ macro_rules! componentwise_binop_impl(
                     for j in 0 .. self.ncols() {
                         for i in 0 .. self.nrows() {
                             unsafe {
-                                let val = self.get_unchecked((i, j)).$method(*rhs.get_unchecked((i, j)));
+                                let val = self.get_unchecked((i, j)).inlined_clone().$method(rhs.get_unchecked((i, j)).inlined_clone());
                                 *out.get_unchecked_mut((i, j)) = val;
                             }
                         }
@@ -187,7 +188,7 @@ macro_rules! componentwise_binop_impl(
                       C2: Dim,
                       SA: StorageMut<N, R1, C1>,
                       SB: Storage<N, R2, C2> {
-                assert!(self.shape() == rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
+                assert_eq!(self.shape(), rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
 
                 // This is the most common case and should be deduced at compile-time.
                 // FIXME: use specialization instead?
@@ -196,7 +197,7 @@ macro_rules! componentwise_binop_impl(
                     let arr2 = rhs.data.as_slice();
                     for i in 0 .. arr2.len() {
                         unsafe {
-                            arr1.get_unchecked_mut(i).$method_assign(*arr2.get_unchecked(i));
+                            arr1.get_unchecked_mut(i).$method_assign(arr2.get_unchecked(i).inlined_clone());
                         }
                     }
                 }
@@ -204,7 +205,7 @@ macro_rules! componentwise_binop_impl(
                     for j in 0 .. rhs.ncols() {
                         for i in 0 .. rhs.nrows() {
                             unsafe {
-                                self.get_unchecked_mut((i, j)).$method_assign(*rhs.get_unchecked((i, j)))
+                                self.get_unchecked_mut((i, j)).$method_assign(rhs.get_unchecked((i, j)).inlined_clone())
                             }
                         }
                     }
@@ -217,7 +218,7 @@ macro_rules! componentwise_binop_impl(
                 where R2: Dim,
                       C2: Dim,
                       SB: StorageMut<N, R2, C2> {
-                assert!(self.shape() == rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
+                assert_eq!(self.shape(), rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
 
                 // This is the most common case and should be deduced at compile-time.
                 // FIXME: use specialization instead?
@@ -226,7 +227,7 @@ macro_rules! componentwise_binop_impl(
                     let arr2 = rhs.data.as_mut_slice();
                     for i in 0 .. arr1.len() {
                         unsafe {
-                            let res = arr1.get_unchecked(i).$method(*arr2.get_unchecked(i));
+                            let res = arr1.get_unchecked(i).inlined_clone().$method(arr2.get_unchecked(i).inlined_clone());
                             *arr2.get_unchecked_mut(i) = res;
                         }
                     }
@@ -236,7 +237,7 @@ macro_rules! componentwise_binop_impl(
                         for i in 0 .. self.nrows() {
                             unsafe {
                                 let r = rhs.get_unchecked_mut((i, j));
-                                *r = self.get_unchecked((i, j)).$method(*r)
+                                *r = self.get_unchecked((i, j)).inlined_clone().$method(r.inlined_clone())
                             }
                         }
                     }
@@ -276,7 +277,7 @@ macro_rules! componentwise_binop_impl(
 
             #[inline]
             fn $method(self, rhs: &'b Matrix<N, R2, C2, SB>) -> Self::Output {
-                assert!(self.shape() == rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
+                assert_eq!(self.shape(), rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
                 let mut res = self.into_owned_sum::<R2, C2>();
                 res.$method_assign_statically_unchecked(rhs);
                 res
@@ -295,7 +296,7 @@ macro_rules! componentwise_binop_impl(
             #[inline]
             fn $method(self, rhs: Matrix<N, R2, C2, SB>) -> Self::Output {
                 let mut rhs = rhs.into_owned_sum::<R1, C1>();
-                assert!(self.shape() == rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
+                assert_eq!(self.shape(), rhs.shape(), "Matrix addition/subtraction dimensions mismatch.");
                 self.$method_assign_statically_unchecked_rhs(&mut rhs);
                 rhs
             }
@@ -445,7 +446,9 @@ where
     /// # use nalgebra::DMatrix;
     /// iter::empty::<&DMatrix<f64>>().sum::<DMatrix<f64>>(); // panics!
     /// ```
-    fn sum<I: Iterator<Item = &'a MatrixMN<N, Dynamic, C>>>(mut iter: I) -> MatrixMN<N, Dynamic, C> {
+    fn sum<I: Iterator<Item = &'a MatrixMN<N, Dynamic, C>>>(
+        mut iter: I,
+    ) -> MatrixMN<N, Dynamic, C> {
         if let Some(first) = iter.next() {
             iter.fold(first.clone(), |acc, x| acc + x)
         } else {
@@ -482,7 +485,7 @@ macro_rules! componentwise_scalarop_impl(
 
                 // for left in res.iter_mut() {
                 for left in res.as_mut_slice().iter_mut() {
-                    *left = left.$method(rhs)
+                    *left = left.inlined_clone().$method(rhs.inlined_clone())
                 }
 
                 res
@@ -508,7 +511,7 @@ macro_rules! componentwise_scalarop_impl(
             fn $method_assign(&mut self, rhs: N) {
                 for j in 0 .. self.ncols() {
                     for i in 0 .. self.nrows() {
-                        unsafe { self.get_unchecked_mut((i, j)).$method_assign(rhs) };
+                        unsafe { self.get_unchecked_mut((i, j)).$method_assign(rhs.inlined_clone()) };
                     }
                 }
             }
@@ -692,11 +695,11 @@ where
     /// Equivalent to `self.adjoint() * rhs`.
     #[inline]
     pub fn ad_mul<R2: Dim, C2: Dim, SB>(&self, rhs: &Matrix<N, R2, C2, SB>) -> MatrixMN<N, C1, C2>
-        where
-            N: ComplexField,
-            SB: Storage<N, R2, C2>,
-            DefaultAllocator: Allocator<N, C1, C2>,
-            ShapeConstraint: SameNumberOfRows<R1, R2>,
+    where
+        N: SimdComplexField,
+        SB: Storage<N, R2, C2>,
+        DefaultAllocator: Allocator<N, C1, C2>,
+        ShapeConstraint: SameNumberOfRows<R1, R2>,
     {
         let mut res =
             unsafe { Matrix::new_uninitialized_generic(self.data.shape().1, rhs.data.shape().1) };
@@ -710,7 +713,10 @@ where
         &self,
         rhs: &Matrix<N, R2, C2, SB>,
         out: &mut Matrix<N, R3, C3, SC>,
-        dot: impl Fn(&VectorSliceN<N, R1, SA::RStride, SA::CStride>, &VectorSliceN<N, R2, SB::RStride, SB::CStride>) -> N,
+        dot: impl Fn(
+            &VectorSliceN<N, R1, SA::RStride, SA::CStride>,
+            &VectorSliceN<N, R2, SB::RStride, SB::CStride>,
+        ) -> N,
     ) where
         SB: Storage<N, R2, C2>,
         SC: StorageMut<N, R3, C3>,
@@ -722,11 +728,21 @@ where
 
         assert!(
             nrows1 == nrows2,
-            "Matrix multiplication dimensions mismatch."
+            "Matrix multiplication dimensions mismatch {:?} and {:?}: left rows != right rows.",
+            self.shape(),
+            rhs.shape()
         );
         assert!(
-            nrows3 == ncols1 && ncols3 == ncols2,
-            "Matrix multiplication output dimensions mismatch."
+            ncols1 == nrows3,
+            "Matrix multiplication output dimensions mismatch {:?} and {:?}: left cols != right rows.",
+            self.shape(),
+            out.shape()
+        );
+        assert!(
+            ncols2 == ncols3,
+            "Matrix multiplication output dimensions mismatch {:?} and {:?}: left cols != right cols",
+            rhs.shape(),
+            out.shape()
         );
 
         for i in 0..ncols1 {
@@ -760,7 +776,7 @@ where
         rhs: &Matrix<N, R2, C2, SB>,
         out: &mut Matrix<N, R3, C3, SC>,
     ) where
-        N: ComplexField,
+        N: SimdComplexField,
         SB: Storage<N, R2, C2>,
         SC: StorageMut<N, R3, C3>,
         ShapeConstraint: SameNumberOfRows<R1, R2> + DimEq<C1, R3> + DimEq<C2, C3>,
@@ -810,10 +826,11 @@ where
                 for j2 in 0..ncols2.value() {
                     for i1 in 0..nrows1.value() {
                         unsafe {
-                            let coeff = *self.get_unchecked((i1, j1));
+                            let coeff = self.get_unchecked((i1, j1)).inlined_clone();
 
                             for i2 in 0..nrows2.value() {
-                                *data_res = coeff * *rhs.get_unchecked((i2, j2));
+                                *data_res = coeff.inlined_clone()
+                                    * rhs.get_unchecked((i2, j2)).inlined_clone();
                                 data_res = data_res.offset(1);
                             }
                         }
@@ -829,8 +846,11 @@ where
 impl<N: Scalar + ClosedAdd, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /// Adds a scalar to `self`.
     #[inline]
+    #[must_use = "Did you mean to use add_scalar_mut()?"]
     pub fn add_scalar(&self, rhs: N) -> MatrixMN<N, R, C>
-    where DefaultAllocator: Allocator<N, R, C> {
+    where
+        DefaultAllocator: Allocator<N, R, C>,
+    {
         let mut res = self.clone_owned();
         res.add_scalar_mut(rhs);
         res
@@ -839,9 +859,11 @@ impl<N: Scalar + ClosedAdd, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C,
     /// Adds a scalar to `self` in-place.
     #[inline]
     pub fn add_scalar_mut(&mut self, rhs: N)
-    where S: StorageMut<N, R, C> {
+    where
+        S: StorageMut<N, R, C>,
+    {
         for e in self.iter_mut() {
-            *e += rhs
+            *e += rhs.inlined_clone()
         }
     }
 }
@@ -867,23 +889,6 @@ where
 }
 
 impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
-    #[inline(always)]
-    fn xcmp<N2>(&self, abs: impl Fn(N) -> N2, ordering: Ordering) -> N2
-        where N2: Scalar + PartialOrd + Zero {
-        let mut iter = self.iter();
-        let mut max = iter.next().cloned().map_or(N2::zero(), &abs);
-
-        for e in iter {
-            let ae = abs(*e);
-
-            if ae.partial_cmp(&max) == Some(ordering) {
-                    max = ae;
-            }
-        }
-
-        max
-    }
-
     /// Returns the absolute value of the component with the largest absolute value.
     /// # Example
     /// ```
@@ -893,8 +898,13 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /// ```
     #[inline]
     pub fn amax(&self) -> N
-        where N: PartialOrd + Signed {
-        self.xcmp(|e| e.abs(), Ordering::Greater)
+    where
+        N: Zero + SimdSigned + SimdPartialOrd,
+    {
+        self.fold_with(
+            |e| e.unwrap_or(&N::zero()).simd_abs(),
+            |a, b| a.simd_max(b.simd_abs()),
+        )
     }
 
     /// Returns the the 1-norm of the complex component with the largest 1-norm.
@@ -907,9 +917,14 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     ///     Complex::new(1.0, 3.0)).camax(), 5.0);
     /// ```
     #[inline]
-    pub fn camax(&self) -> N::RealField
-        where N: ComplexField {
-        self.xcmp(|e| e.norm1(), Ordering::Greater)
+    pub fn camax(&self) -> N::SimdRealField
+    where
+        N: SimdComplexField,
+    {
+        self.fold_with(
+            |e| e.unwrap_or(&N::zero()).simd_norm1(),
+            |a, b| a.simd_max(b.simd_norm1()),
+        )
     }
 
     /// Returns the component with the largest value.
@@ -922,8 +937,18 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /// ```
     #[inline]
     pub fn max(&self) -> N
+<<<<<<< HEAD
         where N: PartialOrd + Zero {
         self.xcmp(|e| e, Ordering::Greater)
+=======
+    where
+        N: SimdPartialOrd + Zero,
+    {
+        self.fold_with(
+            |e| e.map(|e| e.inlined_clone()).unwrap_or(N::zero()),
+            |a, b| a.simd_max(b.inlined_clone()),
+        )
+>>>>>>> upstream/dev
     }
 
     /// Returns the absolute value of the component with the smallest absolute value.
@@ -935,8 +960,13 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /// ```
     #[inline]
     pub fn amin(&self) -> N
-        where N: PartialOrd + Signed {
-        self.xcmp(|e| e.abs(), Ordering::Less)
+    where
+        N: Zero + SimdPartialOrd + SimdSigned,
+    {
+        self.fold_with(
+            |e| e.map(|e| e.simd_abs()).unwrap_or(N::zero()),
+            |a, b| a.simd_min(b.simd_abs()),
+        )
     }
 
     /// Returns the the 1-norm of the complex component with the smallest 1-norm.
@@ -949,9 +979,17 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     ///     Complex::new(1.0, 3.0)).camin(), 3.0);
     /// ```
     #[inline]
-    pub fn camin(&self) -> N::RealField
-        where N: ComplexField {
-        self.xcmp(|e| e.norm1(), Ordering::Less)
+    pub fn camin(&self) -> N::SimdRealField
+    where
+        N: SimdComplexField,
+    {
+        self.fold_with(
+            |e| {
+                e.map(|e| e.simd_norm1())
+                    .unwrap_or(N::SimdRealField::zero())
+            },
+            |a, b| a.simd_min(b.simd_norm1()),
+        )
     }
 
     /// Returns the component with the smallest value.
@@ -964,7 +1002,17 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /// ```
     #[inline]
     pub fn min(&self) -> N
+<<<<<<< HEAD
         where N: PartialOrd + Zero {
         self.xcmp(|e| e, Ordering::Less)
+=======
+    where
+        N: SimdPartialOrd + Zero,
+    {
+        self.fold_with(
+            |e| e.map(|e| e.inlined_clone()).unwrap_or(N::zero()),
+            |a, b| a.simd_min(b.inlined_clone()),
+        )
+>>>>>>> upstream/dev
     }
 }

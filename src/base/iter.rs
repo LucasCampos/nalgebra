@@ -5,7 +5,7 @@ use std::mem;
 
 use crate::base::dimension::{Dim, U1};
 use crate::base::storage::{Storage, StorageMut};
-use crate::base::{Scalar, Matrix, MatrixSlice, MatrixSliceMut};
+use crate::base::{Matrix, MatrixSlice, MatrixSliceMut, Scalar};
 
 macro_rules! iterator {
     (struct $Name:ident for $Storage:ident.$ptr: ident -> $Ptr:ty, $Ref:ty, $SRef: ty) => {
@@ -27,12 +27,30 @@ macro_rules! iterator {
                 let shape = storage.shape();
                 let strides = storage.strides();
                 let inner_offset = shape.0.value() * strides.0.value();
+                let size = shape.0.value() * shape.1.value();
                 let ptr = storage.$ptr();
+
+                // If we have a size of 0, 'ptr' must be
+                // dangling. Howver, 'inner_offset' might
+                // not be zero if only one dimension is zero, so
+                // we don't want to call 'offset'.
+                // This pointer will never actually get used
+                // if our size is '0', so it's fine to use
+                // 'ptr' for both the start and end.
+                let inner_end = if size == 0 {
+                    ptr
+                } else {
+                    // Safety:
+                    // If 'size' is non-zero, we know that 'ptr'
+                    // is not dangling, and 'inner_offset' must lie
+                    // within the allocation
+                    unsafe { ptr.offset(inner_offset as isize) }
+                };
 
                 $Name {
                     ptr: ptr,
                     inner_ptr: ptr,
-                    inner_end: unsafe { ptr.offset(inner_offset as isize) },
+                    inner_end,
                     size: shape.0.value() * shape.1.value(),
                     strides: strides,
                     _phantoms: PhantomData,
@@ -56,7 +74,12 @@ macro_rules! iterator {
                         // Jump to the next outer dimension if needed.
                         if self.ptr == self.inner_end {
                             let stride = self.strides.1.value() as isize;
-                            self.inner_end = self.ptr.offset(stride);
+                            // This might go past the end of the allocation,
+                            // depending on the value of 'size'. We use
+                            // `wrapping_offset` to avoid UB
+                            self.inner_end = self.ptr.wrapping_offset(stride);
+                            // This will always be in bounds, since
+                            // we're going to dereference it
                             self.ptr = self.inner_ptr.offset(stride);
                             self.inner_ptr = self.ptr;
                         }
@@ -65,8 +88,13 @@ macro_rules! iterator {
                         let old = self.ptr;
 
                         let stride = self.strides.0.value() as isize;
-                        self.ptr = self.ptr.offset(stride);
-
+                        // Don't offset `self.ptr` for the last element,
+                        // as this will be out of bounds. Iteration is done
+                        // at this point (the next call to `next` will return `None`)
+                        // so this is not observable.
+                        if self.size != 0 {
+                            self.ptr = self.ptr.offset(stride);
+                        }
                         Some(mem::transmute(old))
                     }
                 }
@@ -97,7 +125,6 @@ macro_rules! iterator {
 iterator!(struct MatrixIter for Storage.ptr -> *const N, &'a N, &'a S);
 iterator!(struct MatrixIterMut for StorageMut.ptr_mut -> *mut N, &'a mut N, &'a mut S);
 
-
 /*
  *
  * Row iterators.
@@ -107,17 +134,14 @@ iterator!(struct MatrixIterMut for StorageMut.ptr_mut -> *mut N, &'a mut N, &'a 
 /// An iterator through the rows of a matrix.
 pub struct RowIter<'a, N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> {
     mat: &'a Matrix<N, R, C, S>,
-    curr: usize
+    curr: usize,
 }
 
 impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> RowIter<'a, N, R, C, S> {
     pub(crate) fn new(mat: &'a Matrix<N, R, C, S>) -> Self {
-        RowIter {
-            mat, curr: 0
-        }
+        RowIter { mat, curr: 0 }
     }
 }
-
 
 impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> Iterator for RowIter<'a, N, R, C, S> {
     type Item = MatrixSlice<'a, N, U1, C, S::RStride, S::CStride>;
@@ -135,7 +159,10 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> Iterator for RowIt
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.mat.nrows() - self.curr, Some(self.mat.nrows() - self.curr))
+        (
+            self.mat.nrows() - self.curr,
+            Some(self.mat.nrows() - self.curr),
+        )
     }
 
     #[inline]
@@ -144,19 +171,20 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> Iterator for RowIt
     }
 }
 
-impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> ExactSizeIterator for RowIter<'a, N, R, C, S> {
+impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> ExactSizeIterator
+    for RowIter<'a, N, R, C, S>
+{
     #[inline]
     fn len(&self) -> usize {
         self.mat.nrows() - self.curr
     }
 }
 
-
 /// An iterator through the mutable rows of a matrix.
 pub struct RowIterMut<'a, N: Scalar, R: Dim, C: Dim, S: StorageMut<N, R, C>> {
     mat: *mut Matrix<N, R, C, S>,
     curr: usize,
-    phantom: PhantomData<&'a mut Matrix<N, R, C, S>>
+    phantom: PhantomData<&'a mut Matrix<N, R, C, S>>,
 }
 
 impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> RowIterMut<'a, N, R, C, S> {
@@ -164,19 +192,18 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> RowIterMut<'a, 
         RowIterMut {
             mat,
             curr: 0,
-            phantom: PhantomData
+            phantom: PhantomData,
         }
     }
 
     fn nrows(&self) -> usize {
-        unsafe {
-            (*self.mat).nrows()
-        }
+        unsafe { (*self.mat).nrows() }
     }
 }
 
-
-impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> Iterator for RowIterMut<'a, N, R, C, S> {
+impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> Iterator
+    for RowIterMut<'a, N, R, C, S>
+{
     type Item = MatrixSliceMut<'a, N, U1, C, S::RStride, S::CStride>;
 
     #[inline]
@@ -201,13 +228,14 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> Iterator for Ro
     }
 }
 
-impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> ExactSizeIterator for RowIterMut<'a, N, R, C, S> {
+impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> ExactSizeIterator
+    for RowIterMut<'a, N, R, C, S>
+{
     #[inline]
     fn len(&self) -> usize {
         self.nrows() - self.curr
     }
 }
-
 
 /*
  *
@@ -218,19 +246,18 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> ExactSizeIterat
 /// An iterator through the columns of a matrix.
 pub struct ColumnIter<'a, N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> {
     mat: &'a Matrix<N, R, C, S>,
-    curr: usize
+    curr: usize,
 }
 
 impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> ColumnIter<'a, N, R, C, S> {
     pub(crate) fn new(mat: &'a Matrix<N, R, C, S>) -> Self {
-        ColumnIter {
-            mat, curr: 0
-        }
+        ColumnIter { mat, curr: 0 }
     }
 }
 
-
-impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> Iterator for ColumnIter<'a, N, R, C, S> {
+impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> Iterator
+    for ColumnIter<'a, N, R, C, S>
+{
     type Item = MatrixSlice<'a, N, R, U1, S::RStride, S::CStride>;
 
     #[inline]
@@ -246,7 +273,10 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> Iterator for Colum
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.mat.ncols() - self.curr, Some(self.mat.ncols() - self.curr))
+        (
+            self.mat.ncols() - self.curr,
+            Some(self.mat.ncols() - self.curr),
+        )
     }
 
     #[inline]
@@ -255,19 +285,20 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> Iterator for Colum
     }
 }
 
-impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> ExactSizeIterator for ColumnIter<'a, N, R, C, S> {
+impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + Storage<N, R, C>> ExactSizeIterator
+    for ColumnIter<'a, N, R, C, S>
+{
     #[inline]
     fn len(&self) -> usize {
         self.mat.ncols() - self.curr
     }
 }
 
-
 /// An iterator through the mutable columns of a matrix.
 pub struct ColumnIterMut<'a, N: Scalar, R: Dim, C: Dim, S: StorageMut<N, R, C>> {
     mat: *mut Matrix<N, R, C, S>,
     curr: usize,
-    phantom: PhantomData<&'a mut Matrix<N, R, C, S>>
+    phantom: PhantomData<&'a mut Matrix<N, R, C, S>>,
 }
 
 impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> ColumnIterMut<'a, N, R, C, S> {
@@ -275,19 +306,18 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> ColumnIterMut<'
         ColumnIterMut {
             mat,
             curr: 0,
-            phantom: PhantomData
+            phantom: PhantomData,
         }
     }
 
     fn ncols(&self) -> usize {
-        unsafe {
-            (*self.mat).ncols()
-        }
+        unsafe { (*self.mat).ncols() }
     }
 }
 
-
-impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> Iterator for ColumnIterMut<'a, N, R, C, S> {
+impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> Iterator
+    for ColumnIterMut<'a, N, R, C, S>
+{
     type Item = MatrixSliceMut<'a, N, R, U1, S::RStride, S::CStride>;
 
     #[inline]
@@ -312,10 +342,11 @@ impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> Iterator for Co
     }
 }
 
-impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> ExactSizeIterator for ColumnIterMut<'a, N, R, C, S> {
+impl<'a, N: Scalar, R: Dim, C: Dim, S: 'a + StorageMut<N, R, C>> ExactSizeIterator
+    for ColumnIterMut<'a, N, R, C, S>
+{
     #[inline]
     fn len(&self) -> usize {
         self.ncols() - self.curr
     }
 }
-

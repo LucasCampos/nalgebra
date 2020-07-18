@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 use num::Zero;
 use num_complex::Complex;
 
+use crate::ComplexHelper;
 use na::allocator::Allocator;
 use na::dimension::{Dim, DimMin, DimMinimum, U1};
 use na::storage::Storage;
 use na::{DefaultAllocator, Matrix, MatrixMN, Scalar, VectorN};
-use crate::ComplexHelper;
 
 use lapack;
 
@@ -16,42 +16,41 @@ use lapack;
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(
-        serialize = "DefaultAllocator: Allocator<N, R, C> +
+    serde(bound(serialize = "DefaultAllocator: Allocator<N, R, C> +
                            Allocator<N, DimMinimum<R, C>>,
          MatrixMN<N, R, C>: Serialize,
-         VectorN<N, DimMinimum<R, C>>: Serialize"
-    ))
+         VectorN<N, DimMinimum<R, C>>: Serialize"))
 )]
 #[cfg_attr(
     feature = "serde-serialize",
-    serde(bound(
-        deserialize = "DefaultAllocator: Allocator<N, R, C> +
+    serde(bound(deserialize = "DefaultAllocator: Allocator<N, R, C> +
                            Allocator<N, DimMinimum<R, C>>,
          MatrixMN<N, R, C>: Deserialize<'de>,
-         VectorN<N, DimMinimum<R, C>>: Deserialize<'de>"
-    ))
+         VectorN<N, DimMinimum<R, C>>: Deserialize<'de>"))
 )]
 #[derive(Clone, Debug)]
 pub struct QR<N: Scalar, R: DimMin<C>, C: Dim>
-where DefaultAllocator: Allocator<N, R, C> + Allocator<N, DimMinimum<R, C>>
+where
+    DefaultAllocator: Allocator<N, R, C> + Allocator<N, DimMinimum<R, C>>,
 {
     qr: MatrixMN<N, R, C>,
     tau: VectorN<N, DimMinimum<R, C>>,
 }
 
-impl<N: Scalar, R: DimMin<C>, C: Dim> Copy for QR<N, R, C>
+impl<N: Scalar + Copy, R: DimMin<C>, C: Dim> Copy for QR<N, R, C>
 where
     DefaultAllocator: Allocator<N, R, C> + Allocator<N, DimMinimum<R, C>>,
     MatrixMN<N, R, C>: Copy,
     VectorN<N, DimMinimum<R, C>>: Copy,
-{}
+{
+}
 
 impl<N: QRScalar + Zero, R: DimMin<C>, C: Dim> QR<N, R, C>
-where DefaultAllocator: Allocator<N, R, C>
+where
+    DefaultAllocator: Allocator<N, R, C>
         + Allocator<N, R, DimMinimum<R, C>>
         + Allocator<N, DimMinimum<R, C>, C>
-        + Allocator<N, DimMinimum<R, C>>
+        + Allocator<N, DimMinimum<R, C>>,
 {
     /// Computes the QR decomposition of the matrix `m`.
     pub fn new(mut m: MatrixMN<N, R, C>) -> Self {
@@ -98,10 +97,11 @@ where DefaultAllocator: Allocator<N, R, C>
 }
 
 impl<N: QRReal + Zero, R: DimMin<C>, C: Dim> QR<N, R, C>
-where DefaultAllocator: Allocator<N, R, C>
+where
+    DefaultAllocator: Allocator<N, R, C>
         + Allocator<N, R, DimMinimum<R, C>>
         + Allocator<N, DimMinimum<R, C>, C>
-        + Allocator<N, DimMinimum<R, C>>
+        + Allocator<N, DimMinimum<R, C>>,
 {
     /// Retrieves the matrices `(Q, R)` of this decompositions.
     pub fn unpack(
@@ -166,7 +166,7 @@ where DefaultAllocator: Allocator<N, R, C>
  */
 /// Trait implemented by scalar types for which Lapack function exist to compute the
 /// QR decomposition.
-pub trait QRScalar: Scalar {
+pub trait QRScalar: Scalar + Copy {
     fn xgeqrf(
         m: i32,
         n: i32,

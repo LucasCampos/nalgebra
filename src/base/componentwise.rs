@@ -3,7 +3,8 @@
 use num::{Signed, Zero};
 use std::ops::{Add, Mul};
 
-use alga::general::{ClosedDiv, ClosedMul};
+use simba::scalar::{ClosedDiv, ClosedMul};
+use simba::simd::SimdPartialOrd;
 
 use crate::base::allocator::{Allocator, SameShapeAllocator};
 use crate::base::constraint::{SameNumberOfColumns, SameNumberOfRows, ShapeConstraint};
@@ -61,7 +62,7 @@ macro_rules! component_binop_impl(
                 for j in 0 .. res.ncols() {
                     for i in 0 .. res.nrows() {
                         unsafe {
-                            res.get_unchecked_mut((i, j)).$op_assign(*rhs.get_unchecked((i, j)));
+                            res.get_unchecked_mut((i, j)).$op_assign(rhs.get_unchecked((i, j)).inlined_clone());
                         }
                     }
                 }
@@ -89,7 +90,7 @@ macro_rules! component_binop_impl(
                     for j in 0 .. self.ncols() {
                         for i in 0 .. self.nrows() {
                             unsafe {
-                                let res = alpha * a.get_unchecked((i, j)).$op(*b.get_unchecked((i, j)));
+                                let res = alpha.inlined_clone() * a.get_unchecked((i, j)).inlined_clone().$op(b.get_unchecked((i, j)).inlined_clone());
                                 *self.get_unchecked_mut((i, j)) = res;
                             }
                         }
@@ -99,8 +100,8 @@ macro_rules! component_binop_impl(
                     for j in 0 .. self.ncols() {
                         for i in 0 .. self.nrows() {
                             unsafe {
-                                let res = alpha * a.get_unchecked((i, j)).$op(*b.get_unchecked((i, j)));
-                                *self.get_unchecked_mut((i, j)) = beta * *self.get_unchecked((i, j)) + res;
+                                let res = alpha.inlined_clone() * a.get_unchecked((i, j)).inlined_clone().$op(b.get_unchecked((i, j)).inlined_clone());
+                                *self.get_unchecked_mut((i, j)) = beta.inlined_clone() * self.get_unchecked((i, j)).inlined_clone() + res;
                             }
                         }
                     }
@@ -121,7 +122,7 @@ macro_rules! component_binop_impl(
                 for j in 0 .. self.ncols() {
                     for i in 0 .. self.nrows() {
                         unsafe {
-                            self.get_unchecked_mut((i, j)).$op_assign(*rhs.get_unchecked((i, j)));
+                            self.get_unchecked_mut((i, j)).$op_assign(rhs.get_unchecked((i, j)).inlined_clone());
                         }
                     }
                 }
@@ -235,3 +236,31 @@ component_binop_impl!(
     ";
     // FIXME: add other operators like bitshift, etc. ?
 );
+
+/*
+ * inf/sup
+ */
+impl<N, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S>
+where
+    N: Scalar + SimdPartialOrd,
+    DefaultAllocator: Allocator<N, R, C>,
+{
+    /// Computes the infimum (aka. componentwise min) of two matrices/vectors.
+    #[inline]
+    pub fn inf(&self, other: &Self) -> MatrixMN<N, R, C> {
+        self.zip_map(other, |a, b| a.simd_min(b))
+    }
+
+    /// Computes the supremum (aka. componentwise max) of two matrices/vectors.
+    #[inline]
+    pub fn sup(&self, other: &Self) -> MatrixMN<N, R, C> {
+        self.zip_map(other, |a, b| a.simd_max(b))
+    }
+
+    /// Computes the (infimum, supremum) of two matrices/vectors.
+    #[inline]
+    pub fn inf_sup(&self, other: &Self) -> (MatrixMN<N, R, C>, MatrixMN<N, R, C>) {
+        // FIXME: can this be optimized?
+        (self.inf(other), self.sup(other))
+    }
+}

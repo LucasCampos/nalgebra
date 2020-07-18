@@ -1,21 +1,28 @@
-use crate::{Scalar, Dim, Matrix, VectorN, RowVectorN, DefaultAllocator, U1, VectorSliceN};
-use alga::general::{Field, SupersetOf};
-use crate::storage::Storage;
 use crate::allocator::Allocator;
+use crate::storage::Storage;
+use crate::{DefaultAllocator, Dim, Matrix, RowVectorN, Scalar, VectorN, VectorSliceN, U1};
+use num::Zero;
+use simba::scalar::{ClosedAdd, Field, SupersetOf};
 
 impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /// Returns a row vector where each element is the result of the application of `f` on the
     /// corresponding column of the original matrix.
     #[inline]
-    pub fn compress_rows(&self, f: impl Fn(VectorSliceN<N, R, S::RStride, S::CStride>) -> N) -> RowVectorN<N, C>
-        where DefaultAllocator: Allocator<N, U1, C> {
-
+    pub fn compress_rows(
+        &self,
+        f: impl Fn(VectorSliceN<N, R, S::RStride, S::CStride>) -> N,
+    ) -> RowVectorN<N, C>
+    where
+        DefaultAllocator: Allocator<N, U1, C>,
+    {
         let ncols = self.data.shape().1;
         let mut res = unsafe { RowVectorN::new_uninitialized_generic(U1, ncols) };
 
         for i in 0..ncols.value() {
             // FIXME: avoid bound checking of column.
-            unsafe { *res.get_unchecked_mut((0, i)) = f(self.column(i)); }
+            unsafe {
+                *res.get_unchecked_mut((0, i)) = f(self.column(i));
+            }
         }
 
         res
@@ -26,15 +33,21 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     ///
     /// This is the same as `self.compress_rows(f).transpose()`.
     #[inline]
-    pub fn compress_rows_tr(&self, f: impl Fn(VectorSliceN<N, R, S::RStride, S::CStride>) -> N) -> VectorN<N, C>
-        where DefaultAllocator: Allocator<N, C> {
-
+    pub fn compress_rows_tr(
+        &self,
+        f: impl Fn(VectorSliceN<N, R, S::RStride, S::CStride>) -> N,
+    ) -> VectorN<N, C>
+    where
+        DefaultAllocator: Allocator<N, C>,
+    {
         let ncols = self.data.shape().1;
         let mut res = unsafe { VectorN::new_uninitialized_generic(ncols, U1) };
 
         for i in 0..ncols.value() {
             // FIXME: avoid bound checking of column.
-            unsafe { *res.vget_unchecked_mut(i) = f(self.column(i)); }
+            unsafe {
+                *res.vget_unchecked_mut(i) = f(self.column(i));
+            }
         }
 
         res
@@ -42,8 +55,14 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
 
     /// Returns a column vector resulting from the folding of `f` on each column of this matrix.
     #[inline]
-    pub fn compress_columns(&self, init: VectorN<N, R>, f: impl Fn(&mut VectorN<N, R>, VectorSliceN<N, R, S::RStride, S::CStride>)) -> VectorN<N, R>
-        where DefaultAllocator: Allocator<N, R> {
+    pub fn compress_columns(
+        &self,
+        init: VectorN<N, R>,
+        f: impl Fn(&mut VectorN<N, R>, VectorSliceN<N, R, S::RStride, S::CStride>),
+    ) -> VectorN<N, R>
+    where
+        DefaultAllocator: Allocator<N, R>,
+    {
         let mut res = init;
 
         for i in 0..self.ncols() {
@@ -54,7 +73,7 @@ impl<N: Scalar, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     }
 }
 
-impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
+impl<N: Scalar + ClosedAdd + Zero, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /*
      *
      * Sum computation.
@@ -83,15 +102,21 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// # Example
     ///
     /// ```
-    /// # use nalgebra::{Matrix2x3, RowVector3};
+    /// # use nalgebra::{Matrix2x3, Matrix3x2};
+    /// # use nalgebra::{RowVector2, RowVector3};
     ///
     /// let m = Matrix2x3::new(1.0, 2.0, 3.0,
     ///                        4.0, 5.0, 6.0);
     /// assert_eq!(m.row_sum(), RowVector3::new(5.0, 7.0, 9.0));
+    ///
+    /// let mint = Matrix3x2::new(1,2,3,4,5,6);
+    /// assert_eq!(mint.row_sum(), RowVector2::new(9,12));
     /// ```
     #[inline]
     pub fn row_sum(&self) -> RowVectorN<N, C>
-        where DefaultAllocator: Allocator<N, U1, C> {
+    where
+        DefaultAllocator: Allocator<N, U1, C>,
+    {
         self.compress_rows(|col| col.sum())
     }
 
@@ -100,15 +125,21 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// # Example
     ///
     /// ```
-    /// # use nalgebra::{Matrix2x3, Vector3};
+    /// # use nalgebra::{Matrix2x3, Matrix3x2};
+    /// # use nalgebra::{Vector2, Vector3};
     ///
     /// let m = Matrix2x3::new(1.0, 2.0, 3.0,
     ///                        4.0, 5.0, 6.0);
     /// assert_eq!(m.row_sum_tr(), Vector3::new(5.0, 7.0, 9.0));
+    ///
+    /// let mint = Matrix3x2::new(1,2,3,4,5,6);
+    /// assert_eq!(mint.row_sum_tr(), Vector2::new(9,12));
     /// ```
     #[inline]
     pub fn row_sum_tr(&self) -> VectorN<N, C>
-        where DefaultAllocator: Allocator<N, C> {
+    where
+        DefaultAllocator: Allocator<N, C>,
+    {
         self.compress_rows_tr(|col| col.sum())
     }
 
@@ -117,21 +148,29 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// # Example
     ///
     /// ```
-    /// # use nalgebra::{Matrix2x3, Vector2};
+    /// # use nalgebra::{Matrix2x3, Matrix3x2};
+    /// # use nalgebra::{Vector2, Vector3};
     ///
     /// let m = Matrix2x3::new(1.0, 2.0, 3.0,
     ///                        4.0, 5.0, 6.0);
     /// assert_eq!(m.column_sum(), Vector2::new(6.0, 15.0));
+    ///
+    /// let mint = Matrix3x2::new(1,2,3,4,5,6);
+    /// assert_eq!(mint.column_sum(), Vector3::new(3,7,11));
     /// ```
     #[inline]
     pub fn column_sum(&self) -> VectorN<N, R>
-        where DefaultAllocator: Allocator<N, R> {
+    where
+        DefaultAllocator: Allocator<N, R>,
+    {
         let nrows = self.data.shape().0;
         self.compress_columns(VectorN::zeros_generic(nrows, U1), |out, col| {
-            out.axpy(N::one(), &col, N::one())
+            *out += col;
         })
     }
+}
 
+impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> Matrix<N, R, C, S> {
     /*
      *
      * Variance computation.
@@ -154,9 +193,12 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
         if self.len() == 0 {
             N::zero()
         } else {
-            let val = self.iter().cloned().fold((N::zero(), N::zero()), |a, b| (a.0 + b * b, a.1 + b));
+            let val = self.iter().cloned().fold((N::zero(), N::zero()), |a, b| {
+                (a.0 + b.inlined_clone() * b.inlined_clone(), a.1 + b)
+            });
             let denom = N::one() / crate::convert::<_, N>(self.len() as f64);
-            val.0 * denom - (val.1 * denom) * (val.1 * denom)
+            let vd = val.1 * denom.inlined_clone();
+            val.0 * denom - vd.inlined_clone() * vd
         }
     }
 
@@ -174,7 +216,9 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// ```
     #[inline]
     pub fn row_variance(&self) -> RowVectorN<N, C>
-        where DefaultAllocator: Allocator<N, U1, C> {
+    where
+        DefaultAllocator: Allocator<N, U1, C>,
+    {
         self.compress_rows(|col| col.variance())
     }
 
@@ -191,7 +235,9 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// ```
     #[inline]
     pub fn row_variance_tr(&self) -> VectorN<N, C>
-        where DefaultAllocator: Allocator<N, C> {
+    where
+        DefaultAllocator: Allocator<N, C>,
+    {
         self.compress_rows_tr(|col| col.variance())
     }
 
@@ -209,18 +255,21 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// ```
     #[inline]
     pub fn column_variance(&self) -> VectorN<N, R>
-        where DefaultAllocator: Allocator<N, R> {
+    where
+        DefaultAllocator: Allocator<N, R>,
+    {
         let (nrows, ncols) = self.data.shape();
 
         let mut mean = self.column_mean();
-        mean.apply(|e| -(e * e));
+        mean.apply(|e| -(e.inlined_clone() * e));
 
         let denom = N::one() / crate::convert::<_, N>(ncols.value() as f64);
         self.compress_columns(mean, |out, col| {
             for i in 0..nrows.value() {
                 unsafe {
                     let val = col.vget_unchecked(i);
-                    *out.vget_unchecked_mut(i) += denom * *val * *val
+                    *out.vget_unchecked_mut(i) +=
+                        denom.inlined_clone() * val.inlined_clone() * val.inlined_clone()
                 }
             }
         })
@@ -266,7 +315,9 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// ```
     #[inline]
     pub fn row_mean(&self) -> RowVectorN<N, C>
-        where DefaultAllocator: Allocator<N, U1, C> {
+    where
+        DefaultAllocator: Allocator<N, U1, C>,
+    {
         self.compress_rows(|col| col.mean())
     }
 
@@ -283,7 +334,9 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// ```
     #[inline]
     pub fn row_mean_tr(&self) -> VectorN<N, C>
-        where DefaultAllocator: Allocator<N, C> {
+    where
+        DefaultAllocator: Allocator<N, C>,
+    {
         self.compress_rows_tr(|col| col.mean())
     }
 
@@ -300,11 +353,13 @@ impl<N: Scalar + Field + SupersetOf<f64>, R: Dim, C: Dim, S: Storage<N, R, C>> M
     /// ```
     #[inline]
     pub fn column_mean(&self) -> VectorN<N, R>
-        where DefaultAllocator: Allocator<N, R> {
+    where
+        DefaultAllocator: Allocator<N, R>,
+    {
         let (nrows, ncols) = self.data.shape();
         let denom = N::one() / crate::convert::<_, N>(ncols.value() as f64);
         self.compress_columns(VectorN::zeros_generic(nrows, U1), |out, col| {
-            out.axpy(denom, &col, N::one())
+            out.axpy(denom.inlined_clone(), &col, N::one())
         })
     }
 }

@@ -13,11 +13,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[cfg(feature = "abomonation-serialize")]
 use abomonation::Abomonation;
 
-use alga::general::RealField;
+use simba::scalar::RealField;
+use simba::simd::{SimdBool, SimdOption, SimdRealField, SimdValue};
 
 use crate::base::dimension::{U1, U3, U4};
 use crate::base::storage::{CStride, RStride};
-use crate::base::{Matrix3, Matrix4, MatrixSlice, MatrixSliceMut, Unit, Vector3, Vector4};
+use crate::base::{
+    Matrix3, Matrix4, MatrixSlice, MatrixSliceMut, Normed, Scalar, Unit, Vector3, Vector4,
+};
 
 use crate::geometry::{Point3, Rotation};
 
@@ -25,14 +28,23 @@ use crate::geometry::{Point3, Rotation};
 /// that may be used as a rotation.
 #[repr(C)]
 #[derive(Debug)]
-pub struct Quaternion<N: RealField> {
+pub struct Quaternion<N: Scalar + SimdValue> {
     /// This quaternion as a 4D vector of coordinates in the `[ x, y, z, w ]` storage order.
     pub coords: Vector4<N>,
 }
 
+impl<N: RealField> Default for Quaternion<N> {
+    fn default() -> Self {
+        Quaternion {
+            coords: Vector4::zeros(),
+        }
+    }
+}
+
 #[cfg(feature = "abomonation-serialize")]
-impl<N: RealField> Abomonation for Quaternion<N>
-where Vector4<N>: Abomonation
+impl<N: SimdRealField> Abomonation for Quaternion<N>
+where
+    Vector4<N>: Abomonation,
 {
     unsafe fn entomb<W: Write>(&self, writer: &mut W) -> IOResult<()> {
         self.coords.entomb(writer)
@@ -47,9 +59,12 @@ where Vector4<N>: Abomonation
     }
 }
 
-impl<N: RealField + Eq> Eq for Quaternion<N> {}
+impl<N: SimdRealField + Eq> Eq for Quaternion<N> where N::Element: SimdRealField {}
 
-impl<N: RealField> PartialEq for Quaternion<N> {
+impl<N: SimdRealField> PartialEq for Quaternion<N>
+where
+    N::Element: SimdRealField,
+{
     fn eq(&self, rhs: &Self) -> bool {
         self.coords == rhs.coords ||
         // Account for the double-covering of S², i.e. q = -q
@@ -57,15 +72,15 @@ impl<N: RealField> PartialEq for Quaternion<N> {
     }
 }
 
-impl<N: RealField + hash::Hash> hash::Hash for Quaternion<N> {
+impl<N: SimdRealField + hash::Hash> hash::Hash for Quaternion<N> {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.coords.hash(state)
     }
 }
 
-impl<N: RealField> Copy for Quaternion<N> {}
+impl<N: Scalar + Copy + SimdValue> Copy for Quaternion<N> {}
 
-impl<N: RealField> Clone for Quaternion<N> {
+impl<N: Scalar + SimdValue> Clone for Quaternion<N> {
     #[inline]
     fn clone(&self) -> Self {
         Self::from(self.coords.clone())
@@ -73,28 +88,37 @@ impl<N: RealField> Clone for Quaternion<N> {
 }
 
 #[cfg(feature = "serde-serialize")]
-impl<N: RealField> Serialize for Quaternion<N>
-where Owned<N, U4>: Serialize
+impl<N: SimdRealField> Serialize for Quaternion<N>
+where
+    Owned<N, U4>: Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    where
+        S: Serializer,
+    {
         self.coords.serialize(serializer)
     }
 }
 
 #[cfg(feature = "serde-serialize")]
-impl<'a, N: RealField> Deserialize<'a> for Quaternion<N>
-where Owned<N, U4>: Deserialize<'a>
+impl<'a, N: SimdRealField> Deserialize<'a> for Quaternion<N>
+where
+    Owned<N, U4>: Deserialize<'a>,
 {
     fn deserialize<Des>(deserializer: Des) -> Result<Self, Des::Error>
-    where Des: Deserializer<'a> {
+    where
+        Des: Deserializer<'a>,
+    {
         let coords = Vector4::<N>::deserialize(deserializer)?;
 
         Ok(Self::from(coords))
     }
 }
 
-impl<N: RealField> Quaternion<N> {
+impl<N: SimdRealField> Quaternion<N>
+where
+    N::Element: SimdRealField,
+{
     /// Moves this unit quaternion into one that owns its data.
     #[inline]
     #[deprecated(note = "This method is a no-op and will be removed in a future release.")]
@@ -120,6 +144,7 @@ impl<N: RealField> Quaternion<N> {
     /// relative_eq!(q_normalized.norm(), 1.0);
     /// ```
     #[inline]
+    #[must_use = "Did you mean to use normalize_mut()?"]
     pub fn normalize(&self) -> Self {
         Self::from(self.coords.normalize())
     }
@@ -140,37 +165,9 @@ impl<N: RealField> Quaternion<N> {
     /// assert!(conj.i == -2.0 && conj.j == -3.0 && conj.k == -4.0 && conj.w == 1.0);
     /// ```
     #[inline]
+    #[must_use = "Did you mean to use conjugate_mut()?"]
     pub fn conjugate(&self) -> Self {
         Self::from_parts(self.w, -self.imag())
-    }
-
-    /// Inverts this quaternion if it is not zero.
-    ///
-    /// # Example
-    /// ```
-    /// # #[macro_use] extern crate approx;
-    /// # use nalgebra::Quaternion;
-    /// let q = Quaternion::new(1.0, 2.0, 3.0, 4.0);
-    /// let inv_q = q.try_inverse();
-    ///
-    /// assert!(inv_q.is_some());
-    /// assert_relative_eq!(inv_q.unwrap() * q, Quaternion::identity());
-    ///
-    /// //Non-invertible case
-    /// let q = Quaternion::new(0.0, 0.0, 0.0, 0.0);
-    /// let inv_q = q.try_inverse();
-    ///
-    /// assert!(inv_q.is_none());
-    /// ```
-    #[inline]
-    pub fn try_inverse(&self) -> Option<Self> {
-        let mut res = Self::from(self.coords.clone_owned());
-
-        if res.try_inverse_mut() {
-            Some(res)
-        } else {
-            None
-        }
     }
 
     /// Linear interpolation between two quaternion.
@@ -306,6 +303,57 @@ impl<N: RealField> Quaternion<N> {
     pub fn dot(&self, rhs: &Self) -> N {
         self.coords.dot(&rhs.coords)
     }
+}
+
+impl<N: SimdRealField> Quaternion<N>
+where
+    N::Element: SimdRealField,
+{
+    /// Inverts this quaternion if it is not zero.
+    ///
+    /// This method also does not works with SIMD components (see `simd_try_inverse` instead).
+    ///
+    /// # Example
+    /// ```
+    /// # #[macro_use] extern crate approx;
+    /// # use nalgebra::Quaternion;
+    /// let q = Quaternion::new(1.0, 2.0, 3.0, 4.0);
+    /// let inv_q = q.try_inverse();
+    ///
+    /// assert!(inv_q.is_some());
+    /// assert_relative_eq!(inv_q.unwrap() * q, Quaternion::identity());
+    ///
+    /// //Non-invertible case
+    /// let q = Quaternion::new(0.0, 0.0, 0.0, 0.0);
+    /// let inv_q = q.try_inverse();
+    ///
+    /// assert!(inv_q.is_none());
+    /// ```
+    #[inline]
+    #[must_use = "Did you mean to use try_inverse_mut()?"]
+    pub fn try_inverse(&self) -> Option<Self>
+    where
+        N: RealField,
+    {
+        let mut res = self.clone();
+
+        if res.try_inverse_mut() {
+            Some(res)
+        } else {
+            None
+        }
+    }
+
+    /// Attempt to inverse this quaternion.
+    ///
+    /// This method also works with SIMD components.
+    #[inline]
+    #[must_use = "Did you mean to use try_inverse_mut()?"]
+    pub fn simd_try_inverse(&self) -> SimdOption<Self> {
+        let norm_squared = self.norm_squared();
+        let ge = norm_squared.simd_ge(N::simd_default_epsilon());
+        SimdOption::new(self.conjugate() / norm_squared, ge)
+    }
 
     /// Calculates the inner product (also known as the dot product).
     /// See "Foundations of Game Engine Development, Volume 1: Mathematics" by Lengyel
@@ -359,7 +407,10 @@ impl<N: RealField> Quaternion<N> {
     /// assert_relative_eq!(expected, result, epsilon = 1.0e-5);
     /// ```
     #[inline]
-    pub fn project(&self, other: &Self) -> Option<Self> {
+    pub fn project(&self, other: &Self) -> Option<Self>
+    where
+        N: RealField,
+    {
         self.inner(other).right_div(other)
     }
 
@@ -378,7 +429,10 @@ impl<N: RealField> Quaternion<N> {
     /// assert_relative_eq!(expected, result, epsilon = 1.0e-5);
     /// ```
     #[inline]
-    pub fn reject(&self, other: &Self) -> Option<Self> {
+    pub fn reject(&self, other: &Self) -> Option<Self>
+    where
+        N: RealField,
+    {
         self.outer(other).right_div(other)
     }
 
@@ -397,7 +451,10 @@ impl<N: RealField> Quaternion<N> {
     /// assert_eq!(half_ang, f32::consts::FRAC_PI_2);
     /// assert_eq!(axis, Some(Vector3::x_axis()));
     /// ```
-    pub fn polar_decomposition(&self) -> (N, N, Option<Unit<Vector3<N>>>) {
+    pub fn polar_decomposition(&self) -> (N, N, Option<Unit<Vector3<N>>>)
+    where
+        N: RealField,
+    {
         if let Some((q, n)) = Unit::try_new_and_get(*self, N::zero()) {
             if let Some(axis) = Unit::try_new(self.vector().clone_owned(), N::zero()) {
                 let angle = q.angle() / crate::convert(2.0f64);
@@ -426,7 +483,7 @@ impl<N: RealField> Quaternion<N> {
         let v = self.vector();
         let s = self.scalar();
 
-        Self::from_parts(n.ln(), v.normalize() * (s / n).acos())
+        Self::from_parts(n.simd_ln(), v.normalize() * (s / n).simd_acos())
     }
 
     /// Compute the exponential of a quaternion.
@@ -440,7 +497,7 @@ impl<N: RealField> Quaternion<N> {
     /// ```
     #[inline]
     pub fn exp(&self) -> Self {
-        self.exp_eps(N::default_epsilon())
+        self.exp_eps(N::simd_default_epsilon())
     }
 
     /// Compute the exponential of a quaternion. Returns the identity if the vector part of this quaternion
@@ -461,16 +518,17 @@ impl<N: RealField> Quaternion<N> {
     pub fn exp_eps(&self, eps: N) -> Self {
         let v = self.vector();
         let nn = v.norm_squared();
+        let le = nn.simd_le(eps * eps);
+        le.if_else(
+            || Self::identity(),
+            || {
+                let w_exp = self.scalar().simd_exp();
+                let n = nn.simd_sqrt();
+                let nv = v * (w_exp * n.simd_sin() / n);
 
-        if nn <= eps * eps {
-            Self::identity()
-        } else {
-            let w_exp = self.scalar().exp();
-            let n = nn.sqrt();
-            let nv = v * (w_exp * n.sin() / n);
-
-            Self::from_parts(w_exp * n.cos(), nv)
-        }
+                Self::from_parts(w_exp * n.simd_cos(), nv)
+            },
+        )
     }
 
     /// Raise the quaternion to a given floating power.
@@ -544,27 +602,21 @@ impl<N: RealField> Quaternion<N> {
     /// ```
     /// # #[macro_use] extern crate approx;
     /// # use nalgebra::Quaternion;
-    /// let mut q = Quaternion::new(1.0, 2.0, 3.0, 4.0);
+    /// let mut q = Quaternion::new(1.0f32, 2.0, 3.0, 4.0);
     ///
     /// assert!(q.try_inverse_mut());
     /// assert_relative_eq!(q * Quaternion::new(1.0, 2.0, 3.0, 4.0), Quaternion::identity());
     ///
     /// //Non-invertible case
-    /// let mut q = Quaternion::new(0.0, 0.0, 0.0, 0.0);
+    /// let mut q = Quaternion::new(0.0f32, 0.0, 0.0, 0.0);
     /// assert!(!q.try_inverse_mut());
     /// ```
     #[inline]
-    pub fn try_inverse_mut(&mut self) -> bool {
+    pub fn try_inverse_mut(&mut self) -> N::SimdBool {
         let norm_squared = self.norm_squared();
-
-        if relative_eq!(&norm_squared, &N::zero()) {
-            false
-        } else {
-            self.conjugate_mut();
-            self.coords /= norm_squared;
-
-            true
-        }
+        let ge = norm_squared.simd_ge(N::simd_default_epsilon());
+        *self = ge.if_else(|| self.conjugate() / norm_squared, || *self);
+        ge
     }
 
     /// Normalizes this quaternion.
@@ -601,6 +653,8 @@ impl<N: RealField> Quaternion<N> {
     }
 
     /// Check if the quaternion is pure.
+    ///
+    /// A quaternion is pure if it has no real part (`self.w == 0.0`).
     #[inline]
     pub fn is_pure(&self) -> bool {
         self.w.is_zero()
@@ -616,7 +670,10 @@ impl<N: RealField> Quaternion<N> {
     ///
     /// Calculates B<sup>-1</sup> * A where A = self, B = other.
     #[inline]
-    pub fn left_div(&self, other: &Self) -> Option<Self> {
+    pub fn left_div(&self, other: &Self) -> Option<Self>
+    where
+        N: RealField,
+    {
         other.try_inverse().map(|inv| inv * self)
     }
 
@@ -635,7 +692,10 @@ impl<N: RealField> Quaternion<N> {
     /// assert_relative_eq!(expected, result, epsilon = 1.0e-7);
     /// ```
     #[inline]
-    pub fn right_div(&self, other: &Self) -> Option<Self> {
+    pub fn right_div(&self, other: &Self) -> Option<Self>
+    where
+        N: RealField,
+    {
         other.try_inverse().map(|inv| self * inv)
     }
 
@@ -653,8 +713,8 @@ impl<N: RealField> Quaternion<N> {
     #[inline]
     pub fn cos(&self) -> Self {
         let z = self.imag().magnitude();
-        let w = -self.w.sin() * z.sinhc();
-        Self::from_parts(self.w.cos() * z.cosh(), self.imag() * w)
+        let w = -self.w.simd_sin() * z.simd_sinhc();
+        Self::from_parts(self.w.simd_cos() * z.simd_cosh(), self.imag() * w)
     }
 
     /// Calculates the quaternionic arccosinus.
@@ -691,8 +751,8 @@ impl<N: RealField> Quaternion<N> {
     #[inline]
     pub fn sin(&self) -> Self {
         let z = self.imag().magnitude();
-        let w = self.w.cos() * z.sinhc();
-        Self::from_parts(self.w.sin() * z.cosh(), self.imag() * w)
+        let w = self.w.simd_cos() * z.simd_sinhc();
+        Self::from_parts(self.w.simd_sin() * z.simd_cosh(), self.imag() * w)
     }
 
     /// Calculates the quaternionic arcsinus.
@@ -727,7 +787,10 @@ impl<N: RealField> Quaternion<N> {
     /// assert_relative_eq!(expected, result, epsilon = 1.0e-7);
     /// ```
     #[inline]
-    pub fn tan(&self) -> Self {
+    pub fn tan(&self) -> Self
+    where
+        N: RealField,
+    {
         self.sin().right_div(&self.cos()).unwrap()
     }
 
@@ -742,7 +805,10 @@ impl<N: RealField> Quaternion<N> {
     /// assert_relative_eq!(input, result, epsilon = 1.0e-7);
     /// ```
     #[inline]
-    pub fn atan(&self) -> Self {
+    pub fn atan(&self) -> Self
+    where
+        N: RealField,
+    {
         let u = Self::from_imag(self.imag().normalize());
         let num = u + self;
         let den = u - self;
@@ -829,7 +895,10 @@ impl<N: RealField> Quaternion<N> {
     /// assert_relative_eq!(expected, result, epsilon = 1.0e-7);
     /// ```
     #[inline]
-    pub fn tanh(&self) -> Self {
+    pub fn tanh(&self) -> Self
+    where
+        N: RealField,
+    {
         self.sinh().right_div(&self.cosh()).unwrap()
     }
 
@@ -879,8 +948,7 @@ impl<N: RealField + RelativeEq<Epsilon = N>> RelativeEq for Quaternion<N> {
         other: &Self,
         epsilon: Self::Epsilon,
         max_relative: Self::Epsilon,
-    ) -> bool
-    {
+    ) -> bool {
         self.as_vector().relative_eq(other.as_vector(), epsilon, max_relative) ||
         // Account for the double-covering of S², i.e. q = -q
         self.as_vector().iter().zip(other.as_vector().iter()).all(|(a, b)| a.relative_eq(&-*b, epsilon, max_relative))
@@ -914,25 +982,34 @@ impl<N: RealField + fmt::Display> fmt::Display for Quaternion<N> {
 /// A unit quaternions. May be used to represent a rotation.
 pub type UnitQuaternion<N> = Unit<Quaternion<N>>;
 
-impl<N: RealField> UnitQuaternion<N> {
-    /// Moves this unit quaternion into one that owns its data.
+impl<N: SimdRealField> Normed for Quaternion<N> {
+    type Norm = N::SimdRealField;
+
     #[inline]
-    #[deprecated(
-        note = "This method is unnecessary and will be removed in a future release. Use `.clone()` instead."
-    )]
-    pub fn into_owned(self) -> Self {
-        self
+    fn norm(&self) -> N::SimdRealField {
+        self.coords.norm()
     }
 
-    /// Clones this unit quaternion into one that owns its data.
     #[inline]
-    #[deprecated(
-        note = "This method is unnecessary and will be removed in a future release. Use `.clone()` instead."
-    )]
-    pub fn clone_owned(&self) -> Self {
-        *self
+    fn norm_squared(&self) -> N::SimdRealField {
+        self.coords.norm_squared()
     }
 
+    #[inline]
+    fn scale_mut(&mut self, n: Self::Norm) {
+        self.coords.scale_mut(n)
+    }
+
+    #[inline]
+    fn unscale_mut(&mut self, n: Self::Norm) {
+        self.coords.unscale_mut(n)
+    }
+}
+
+impl<N: SimdRealField> UnitQuaternion<N>
+where
+    N::Element: SimdRealField,
+{
     /// The rotation angle in [0; pi] of this unit quaternion.
     ///
     /// # Example
@@ -944,8 +1021,8 @@ impl<N: RealField> UnitQuaternion<N> {
     /// ```
     #[inline]
     pub fn angle(&self) -> N {
-        let w = self.quaternion().scalar().abs();
-	    self.quaternion().imag().norm().atan2(w) * crate::convert(2.0f64)
+        let w = self.quaternion().scalar().simd_abs();
+        self.quaternion().imag().norm().simd_atan2(w) * crate::convert(2.0f64)
     }
 
     /// The underlying quaternion.
@@ -974,6 +1051,7 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert_eq!(conj, UnitQuaternion::from_axis_angle(&-axis, 1.78));
     /// ```
     #[inline]
+    #[must_use = "Did you mean to use conjugate_mut()?"]
     pub fn conjugate(&self) -> Self {
         Self::new_unchecked(self.as_ref().conjugate())
     }
@@ -990,6 +1068,7 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert_eq!(inv * rot, UnitQuaternion::identity());
     /// ```
     #[inline]
+    #[must_use = "Did you mean to use inverse_mut()?"]
     pub fn inverse(&self) -> Self {
         self.conjugate()
     }
@@ -1024,7 +1103,7 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert_relative_eq!(rot_to * rot1, rot2, epsilon = 1.0e-6);
     /// ```
     #[inline]
-    pub fn rotation_to(&self, other: &Self) -> Self{
+    pub fn rotation_to(&self, other: &Self) -> Self {
         other / self
     }
 
@@ -1067,13 +1146,26 @@ impl<N: RealField> UnitQuaternion<N> {
     ///
     /// Panics if the angle between both quaternion is 180 degrees (in which case the interpolation
     /// is not well-defined). Use `.try_slerp` instead to avoid the panic.
+    ///
+    /// # Examples:
+    ///
+    /// ```
+    /// # use nalgebra::geometry::UnitQuaternion;
+    ///
+    /// let q1 = UnitQuaternion::from_euler_angles(std::f32::consts::FRAC_PI_4, 0.0, 0.0);
+    /// let q2 = UnitQuaternion::from_euler_angles(-std::f32::consts::PI, 0.0, 0.0);
+    ///
+    /// let q = q1.slerp(&q2, 1.0 / 3.0);
+    ///
+    /// assert_eq!(q.euler_angles(), (std::f32::consts::FRAC_PI_2, 0.0, 0.0));
+    /// ```
     #[inline]
-    pub fn slerp(&self, other: &Self, t: N) -> Self {
-        Unit::new_unchecked(Quaternion::from(
-            Unit::new_unchecked(self.coords)
-                .slerp(&Unit::new_unchecked(other.coords), t)
-                .into_inner(),
-        ))
+    pub fn slerp(&self, other: &Self, t: N) -> Self
+    where
+        N: RealField,
+    {
+        self.try_slerp(other, t, N::default_epsilon())
+            .expect("Quaternion slerp: ambiguous configuration.")
     }
 
     /// Computes the spherical linear interpolation between two unit quaternions or returns `None`
@@ -1087,16 +1179,25 @@ impl<N: RealField> UnitQuaternion<N> {
     /// * `epsilon`: the value below which the sinus of the angle separating both quaternion
     /// must be to return `None`.
     #[inline]
-    pub fn try_slerp(
-        &self,
-        other: &Self,
-        t: N,
-        epsilon: N,
-    ) -> Option<Self>
+    pub fn try_slerp(&self, other: &Self, t: N, epsilon: N) -> Option<Self>
+    where
+        N: RealField,
     {
-        Unit::new_unchecked(self.coords)
-            .try_slerp(&Unit::new_unchecked(other.coords), t, epsilon)
-            .map(|q| Unit::new_unchecked(Quaternion::from(q.into_inner())))
+        let coords = if self.coords.dot(&other.coords) < N::zero() {
+            Unit::new_unchecked(self.coords).try_slerp(
+                &Unit::new_unchecked(-other.coords),
+                t,
+                epsilon,
+            )
+        } else {
+            Unit::new_unchecked(self.coords).try_slerp(
+                &Unit::new_unchecked(other.coords),
+                t,
+                epsilon,
+            )
+        };
+
+        coords.map(|q| Unit::new_unchecked(Quaternion::from(q.into_inner())))
     }
 
     /// Compute the conjugate of this unit quaternion in-place.
@@ -1137,7 +1238,10 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert!(rot.axis().is_none());
     /// ```
     #[inline]
-    pub fn axis(&self) -> Option<Unit<Vector3<N>>> {
+    pub fn axis(&self) -> Option<Unit<Vector3<N>>>
+    where
+        N: RealField,
+    {
         let v = if self.quaternion().scalar() >= N::zero() {
             self.as_ref().vector().clone_owned()
         } else {
@@ -1158,7 +1262,10 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert_relative_eq!(rot.scaled_axis(), axisangle, epsilon = 1.0e-6);
     /// ```
     #[inline]
-    pub fn scaled_axis(&self) -> Vector3<N> {
+    pub fn scaled_axis(&self) -> Vector3<N>
+    where
+        N: RealField,
+    {
         if let Some(axis) = self.axis() {
             axis.into_inner() * self.angle()
         } else {
@@ -1183,7 +1290,10 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert!(rot.axis_angle().is_none());
     /// ```
     #[inline]
-    pub fn axis_angle(&self) -> Option<(Unit<Vector3<N>>, N)> {
+    pub fn axis_angle(&self) -> Option<(Unit<Vector3<N>>, N)>
+    where
+        N: RealField,
+    {
         self.axis().map(|axis| (axis, self.angle()))
     }
 
@@ -1210,7 +1320,10 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert_relative_eq!(q.ln().vector().into_owned(), axisangle, epsilon = 1.0e-6);
     /// ```
     #[inline]
-    pub fn ln(&self) -> Quaternion<N> {
+    pub fn ln(&self) -> Quaternion<N>
+    where
+        N: RealField,
+    {
         if let Some(v) = self.axis() {
             Quaternion::from_imag(v.into_inner() * self.angle())
         } else {
@@ -1235,7 +1348,10 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert_eq!(pow.angle(), 2.4);
     /// ```
     #[inline]
-    pub fn powf(&self, n: N) -> Self {
+    pub fn powf(&self, n: N) -> Self
+    where
+        N: RealField,
+    {
         if let Some(v) = self.axis() {
             Self::from_axis_angle(&v, self.angle() * n)
         } else {
@@ -1295,7 +1411,10 @@ impl<N: RealField> UnitQuaternion<N> {
     /// The angles are produced in the form (roll, pitch, yaw).
     #[inline]
     #[deprecated(note = "This is renamed to use `.euler_angles()`.")]
-    pub fn to_euler_angles(&self) -> (N, N, N) {
+    pub fn to_euler_angles(&self) -> (N, N, N)
+    where
+        N: RealField,
+    {
         self.euler_angles()
     }
 
@@ -1314,7 +1433,10 @@ impl<N: RealField> UnitQuaternion<N> {
     /// assert_relative_eq!(euler.2, 0.3, epsilon = 1.0e-6);
     /// ```
     #[inline]
-    pub fn euler_angles(&self) -> (N, N, N) {
+    pub fn euler_angles(&self) -> (N, N, N)
+    where
+        N: RealField,
+    {
         self.to_rotation_matrix().euler_angles()
     }
 
@@ -1422,6 +1544,12 @@ impl<N: RealField> UnitQuaternion<N> {
     }
 }
 
+impl<N: RealField> Default for UnitQuaternion<N> {
+    fn default() -> Self {
+        Self::identity()
+    }
+}
+
 impl<N: RealField + fmt::Display> fmt::Display for UnitQuaternion<N> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(axis) = self.axis() {
@@ -1470,8 +1598,7 @@ impl<N: RealField + RelativeEq<Epsilon = N>> RelativeEq for UnitQuaternion<N> {
         other: &Self,
         epsilon: Self::Epsilon,
         max_relative: Self::Epsilon,
-    ) -> bool
-    {
+    ) -> bool {
         self.as_ref()
             .relative_eq(other.as_ref(), epsilon, max_relative)
     }

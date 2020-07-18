@@ -3,10 +3,12 @@ use std::ops::{
     Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign,
 };
 
-use alga::general::{ClosedAdd, ClosedDiv, ClosedMul, ClosedNeg, ClosedSub};
+use simba::scalar::{ClosedAdd, ClosedDiv, ClosedMul, ClosedNeg, ClosedSub};
 
 use crate::base::allocator::{Allocator, SameShapeAllocator};
-use crate::base::constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint};
+use crate::base::constraint::{
+    AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint,
+};
 use crate::base::dimension::{Dim, DimName, U1};
 use crate::base::storage::Storage;
 use crate::base::{DefaultAllocator, Matrix, Scalar, Vector, VectorSum};
@@ -19,7 +21,8 @@ use crate::geometry::Point;
  *
  */
 impl<N: Scalar, D: DimName> Index<usize> for Point<N, D>
-where DefaultAllocator: Allocator<N, D>
+where
+    DefaultAllocator: Allocator<N, D>,
 {
     type Output = N;
 
@@ -30,7 +33,8 @@ where DefaultAllocator: Allocator<N, D>
 }
 
 impl<N: Scalar, D: DimName> IndexMut<usize> for Point<N, D>
-where DefaultAllocator: Allocator<N, D>
+where
+    DefaultAllocator: Allocator<N, D>,
 {
     #[inline]
     fn index_mut(&mut self, i: usize) -> &mut Self::Output {
@@ -44,7 +48,8 @@ where DefaultAllocator: Allocator<N, D>
  *
  */
 impl<N: Scalar + ClosedNeg, D: DimName> Neg for Point<N, D>
-where DefaultAllocator: Allocator<N, D>
+where
+    DefaultAllocator: Allocator<N, D>,
 {
     type Output = Self;
 
@@ -55,7 +60,8 @@ where DefaultAllocator: Allocator<N, D>
 }
 
 impl<'a, N: Scalar + ClosedNeg, D: DimName> Neg for &'a Point<N, D>
-where DefaultAllocator: Allocator<N, D>
+where
+    DefaultAllocator: Allocator<N, D>,
 {
     type Output = Point<N, D>;
 
@@ -138,7 +144,7 @@ add_sub_impl!(Add, add, ClosedAdd;
 macro_rules! op_assign_impl(
     ($($TraitAssign: ident, $method_assign: ident, $bound: ident);* $(;)*) => {$(
         impl<'b, N, D1: DimName, D2: Dim, SB> $TraitAssign<&'b Vector<N, D2, SB>> for Point<N, D1>
-            where N:  Scalar + $bound,
+            where N: Scalar + $bound,
                   SB: Storage<N, D2>,
                   DefaultAllocator: Allocator<N, D1>,
                   ShapeConstraint: SameNumberOfRows<D1, D2> {
@@ -150,7 +156,7 @@ macro_rules! op_assign_impl(
         }
 
         impl<N, D1: DimName, D2: Dim, SB> $TraitAssign<Vector<N, D2, SB>> for Point<N, D1>
-            where N:  Scalar + $bound,
+            where N: Scalar + $bound,
                   SB: Storage<N, D2>,
                   DefaultAllocator: Allocator<N, D1>,
                   ShapeConstraint: SameNumberOfRows<D1, D2> {
